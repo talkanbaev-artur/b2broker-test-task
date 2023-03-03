@@ -1,9 +1,15 @@
 package main
 
 import (
+	"context"
+	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"github.com/talkanbaev-artur/b2broker-interview/src/handler"
 	"github.com/talkanbaev-artur/b2broker-interview/src/server"
 )
 
@@ -16,33 +22,32 @@ func main() {
 		}
 	}()
 
-	time.Sleep(time.Second)
+	//Seeting to debug level to see the inner msgs about handling commands
+	logrus.SetLevel(logrus.DebugLevel)
 
-	err := w.Send(server.MethodRequest{
-		ReqID:  "XXX-1",
-		Method: server.MethodAuth,
-		Args: map[string]string{
-			"login":    "foo",
-			"password": "bar",
-		},
-	})
+	ctx, cancel := context.WithCancel(context.Background())
+	//using chain create to  create and start a server
+	h, err := handler.NewHandler("foo", "bar").WithServer(w).Start(ctx)
 	if err != nil {
-		logrus.WithError(err).Error("could not authorize")
+		logrus.Fatal(err)
 	}
-
-	err = w.Send(server.MethodRequest{
-		ReqID:  "XXX-2",
-		Method: server.MethodExecutions,
-		Args: map[string]string{
-			"symbol": "BTC/USDT",
-		},
+	h.AddSymbols("BTC")
+	time.AfterFunc(time.Second*10, func() {
+		h.AddSymbols("USDT", "NOT BTC", "ETH", "WHTEVR")
 	})
-	if err != nil {
-		logrus.WithError(err).Error("could not authorize")
-	}
+	out := h.GetOut()
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 
-	read := w.Read()
-	for event := range read {
-		logrus.WithField("payload", string(event)).Info("got new message")
+L:
+	for {
+		select {
+		case <-c:
+			cancel()
+			logrus.Infof("Shutdown...")
+			break L
+		case msg := <-out:
+			fmt.Printf("Data: %v\n", msg)
+		}
 	}
 }
